@@ -23,23 +23,23 @@ st.markdown("""
     .stApp { background-color: #0b0f19; color: #f1f5f9; }
     
     /* Panel Containers */
-    .panel-box { background-color: #111827; padding: 8px 12px; border-radius: 6px; border: 1px solid #1f2937; margin-bottom: 6px; }
+    .panel-box { background-color: #111827; padding: 6px 10px; border-radius: 6px; border: 1px solid #1f2937; margin-bottom: 4px; }
     
     /* Metrics */
-    div[data-testid="stMetricValue"] { font-size: 1.1rem !important; font-weight: 700 !important; color: #f8fafc; }
-    div[data-testid="stMetricLabel"] { font-size: 0.65rem !important; color: #94a3b8 !important; margin-bottom: -5px; text-transform: uppercase;}
+    div[data-testid="stMetricValue"] { font-size: 1.05rem !important; font-weight: 700 !important; color: #f8fafc; }
+    div[data-testid="stMetricLabel"] { font-size: 0.60rem !important; color: #94a3b8 !important; margin-bottom: -5px; text-transform: uppercase;}
     
     /* Force Radio buttons horizontally */
-    div[data-testid="stRadio"] > div { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 12px !important; }
+    div[data-testid="stRadio"] > div { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 10px !important; }
     div[data-testid="stRadio"] label { font-size: 0.70rem !important; font-weight: 600; white-space: nowrap; }
     .stSelectbox label { font-size: 0.70rem !important; color: #94a3b8; display: none; }
     .stCheckbox label { font-size: 0.70rem !important; font-weight: 600; }
     .stMarkdown { margin-bottom: -15px; }
     
     /* Custom Tables */
-    .action-table { width: 100%; text-align: center; border-collapse: collapse; font-size: 11px; }
-    .action-table th { padding: 4px; border-bottom: 1px solid #334155; color: #94a3b8; font-weight: normal; }
-    .action-table td { padding: 4px; font-weight: bold; }
+    .action-table { width: 100%; text-align: center; border-collapse: collapse; font-size: 10px; }
+    .action-table th { padding: 2px; border-bottom: 1px solid #334155; color: #94a3b8; font-weight: normal; }
+    .action-table td { padding: 2px; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -83,7 +83,6 @@ top_left, top_right = st.columns([1.2, 1])
 
 with top_left:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
-    # Row 1 of Controls
     c1, c2, c3, c4 = st.columns([1, 1.5, 1.5, 1])
     with c1: market_mode = st.radio("Mode", ["🟢 LIVE", "⏪ REPLAY"], horizontal=True, label_visibility="collapsed")
     with c2: symbol = st.selectbox("Symbol", ["NIFTY", "BANKNIFTY"], index=0 if st.session_state.symbol == "NIFTY" else 1, label_visibility="collapsed")
@@ -93,9 +92,8 @@ with top_left:
     if market_mode == "🟢 LIVE":
         with c4: enable_audio = st.checkbox("🔊 Voice Alerts", value=True)
         st.markdown("<hr style='margin: 4px 0px; border-color: #1e293b;'>", unsafe_allow_html=True)
-        # Row 2 of Controls
         rc1, rc2 = st.columns([4, 1])
-        with rc1: timeframe = st.radio("Velocity Window", ["1 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "Full Day"], horizontal=True)
+        with rc1: timeframe = st.radio("Velocity Window", ["1 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "Full Day"], horizontal=True, index=1)
         with rc2: refresh_rate = st.selectbox("Refresh", ["1 min", "3 min", "Manual"], index=1, label_visibility="collapsed")
         
         raw_data, expiries = fetch_nse_data(symbol)
@@ -136,7 +134,7 @@ with top_left:
         unique_times = hist_df['timestamp'].dt.strftime("%H:%M:%S").unique()
         
         rc1, rc2 = st.columns([3, 1])
-        with rc1: timeframe = st.radio("Velocity Window", ["1 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "Full Day"], horizontal=True)
+        with rc1: timeframe = st.radio("Velocity Window", ["1 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "Full Day"], horizontal=True, index=1)
         with rc2: sel_time_str = st.select_slider("Time", options=unique_times, value=unique_times[-1], label_visibility="collapsed")
         
         target_dt = pd.to_datetime(f"{sel_date} {sel_time_str}")
@@ -196,8 +194,8 @@ with top_right:
 # ==========================================
 # 🟦 MIDDLE ROW: SPLIT GRID LAYOUT
 # ==========================================
-bot_left, bot_mid, bot_right = st.columns([3.5, 2.0, 4.5])
-chart_bg = dict(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), margin=dict(l=10, r=10, t=20, b=5), yaxis=dict(gridcolor='#1e293b'))
+bot_left, bot_mid, bot_right = st.columns([3.3, 1.7, 5.0])
+chart_bg = dict(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), yaxis=dict(gridcolor='#1e293b'))
 
 with bot_left:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
@@ -206,7 +204,7 @@ with bot_left:
     fig_tot.add_trace(go.Bar(x=df_display['strike'], y=df_display['ce_oi'], name='Call OI', marker_color='#ef4444'))
     fig_tot.add_trace(go.Bar(x=df_display['strike'], y=df_display['pe_oi'], name='Put OI', marker_color='#22c55e'))
     fig_tot.add_vline(x=spot_price, line_dash="dash", line_color="#38bdf8"); fig_tot.add_vline(x=max_pain, line_dash="dot", line_color="#facc15")
-    fig_tot.update_layout(**chart_bg, height=175, barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0), xaxis=dict(tickmode='array', tickvals=df_display['strike'], tickangle=-45))
+    fig_tot.update_layout(**chart_bg, margin=dict(l=5, r=5, t=15, b=5), height=155, barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0), xaxis=dict(tickmode='array', tickvals=df_display['strike'], tickangle=-45))
     st.plotly_chart(fig_tot, use_container_width=True, config={'displayModeBar': False}, key="c_tot")
     
     st.markdown(f"<p style='font-size:11px; font-weight:700; color:#facc15; margin-top:5px; margin-bottom: 0;'>⚡ VELOCITY CHANGE ({timeframe})</p>", unsafe_allow_html=True)
@@ -214,59 +212,82 @@ with bot_left:
     fig_coi.add_trace(go.Bar(x=df_display['strike'], y=df_display['ce_coi'], name='Call ΔOI', marker_color='#f87171'))
     fig_coi.add_trace(go.Bar(x=df_display['strike'], y=df_display['pe_coi'], name='Put ΔOI', marker_color='#4ade80'))
     fig_coi.add_vline(x=spot_price, line_dash="dash", line_color="#38bdf8"); fig_coi.add_vline(x=max_pain, line_dash="dot", line_color="#facc15")
-    fig_coi.update_layout(**chart_bg, height=175, barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0), xaxis=dict(tickmode='array', tickvals=df_display['strike'], tickangle=-45))
+    fig_coi.update_layout(**chart_bg, margin=dict(l=5, r=5, t=15, b=5), height=155, barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0), xaxis=dict(tickmode='array', tickvals=df_display['strike'], tickangle=-45))
     st.plotly_chart(fig_coi, use_container_width=True, config={'displayModeBar': False}, key="c_coi")
     st.markdown("</div>", unsafe_allow_html=True)
 
 with bot_mid:
-    st.markdown("<div class='panel-box' style='height: 97%; padding-top: 10px;'>", unsafe_allow_html=True)
+    st.markdown("<div class='panel-box' style='height: 98%; padding-top: 10px;'>", unsafe_allow_html=True)
     bm1, bm2 = st.columns(2)
     with bm1:
         st.markdown(f"<p style='font-size:10px; color:#94a3b8; text-align:center; margin-bottom: 0;'><b>Net Flow ({timeframe})</b></p>", unsafe_allow_html=True)
         f_b1 = go.Figure(data=[go.Bar(x=['CE Δ', 'PE Δ'], y=[tc_coi, tp_coi], marker_color=['#ef4444', '#22c55e'], text=[format_oi(tc_coi), format_oi(tp_coi)], textposition='auto', textfont=dict(color='white'))])
-        f_b1.update_layout(height=370, margin=dict(l=0, r=0, t=5, b=5), plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', showlegend=False)
+        f_b1.update_layout(height=320, margin=dict(l=0, r=0, t=5, b=15), plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', showlegend=False)
         st.plotly_chart(f_b1, use_container_width=True, config={'displayModeBar': False}, key="b_flo")
     with bm2:
         st.markdown(f"<p style='font-size:10px; color:#94a3b8; text-align:center; margin-bottom: 0;'><b>Total Chain OI</b></p>", unsafe_allow_html=True)
         f_b2 = go.Figure(data=[go.Bar(x=['Tot CE', 'Tot PE'], y=[t_ce, t_pe], marker_color=['#ef4444', '#22c55e'], text=[format_oi(t_ce), format_oi(t_pe)], textposition='auto', textfont=dict(color='white'))])
-        f_b2.update_layout(height=370, margin=dict(l=0, r=0, t=5, b=5), plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', showlegend=False)
+        f_b2.update_layout(height=320, margin=dict(l=0, r=0, t=5, b=15), plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', showlegend=False)
         st.plotly_chart(f_b2, use_container_width=True, config={'displayModeBar': False}, key="b_tot")
     st.markdown("</div>", unsafe_allow_html=True)
 
 with bot_right:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
-    d_cols = st.columns(5)
+    
+    # Extract Net Flows for multi-timeframe alignment
+    mtf_flows = {}
+    flow_states = {}
+    
+    for m in [3, 5, 15, 30, 60]:
+        if len(st.session_state.oi_snapshots) > 1:
+            tgt = now - datetime.timedelta(minutes=m); snp = min(st.session_state.oi_snapshots, key=lambda x: abs(x[0] - tgt))
+            tm = pd.merge(df_current, snp[1], on='strike', suffixes=('', '_prev'))
+            if strike_filter != "All": tm = tm[abs(tm['strike'] - atm_strike) <= (int(strike_filter) * step)]
+            cv, pv = (tm['ce_oi'] - tm['ce_oi_prev']).sum(), (tm['pe_oi'] - tm['pe_oi_prev']).sum()
+        else: cv, pv = 0, 0
+        net_f = pv - cv
+        mtf_flows[f"{m}m"] = net_f
+        flow_states[f"{m}m"] = net_f > 0
+    
+    total_ce_coi_day, total_pe_coi_day = df_display['ce_coi_day'].sum(), df_display['pe_coi_day'].sum()
+    day_net = total_pe_coi_day - total_ce_coi_day
+    mtf_flows["1D"] = day_net
+    flow_states["1D"] = day_net > 0
+    day_coi_pcr = (total_pe_coi_day/total_ce_coi_day) if total_ce_coi_day>0 else (9.9 if total_pe_coi_day>0 else 1.0)
+
+    # 8-Column Grid for Donuts + Netflow Metrics
+    d_cols = st.columns([1.4, 1.4, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9])
     
     with d_cols[0]:
-        st.markdown(f"<div style='text-align:center; line-height:1.2;'><span style='font-size:11px; color:#94a3b8; font-weight:bold;'>Cum. Ratio</span><br><span style='font-size:13px; color:#fff; font-weight:bold;'>{pcr:.2f}</span><br><span style='font-size:9px; color:#cbd5e1;'>({sig.split()[0]})</span></div>", unsafe_allow_html=True)
-        f_b3 = go.Figure(data=[go.Pie(labels=['Call', 'Put'], values=[max(t_ce, 1), max(t_pe, 1)], hole=0.6, marker_colors=['#ef4444', '#22c55e'], textinfo='percent', textfont=dict(color='white', size=10))])
-        f_b3.update_layout(height=110, margin=dict(l=0, r=0, t=5, b=5), showlegend=False, paper_bgcolor='#0b0f19')
+        st.markdown(f"<div style='text-align:center; line-height:1.2; margin-bottom: 2px;'><span style='font-size:11px; color:#94a3b8; font-weight:bold;'>Cum. Ratio</span></div>", unsafe_allow_html=True)
+        f_b3 = go.Figure(data=[go.Pie(labels=['Call', 'Put'], values=[max(t_ce, 1), max(t_pe, 1)], hole=0.6, marker_colors=['#ef4444', '#22c55e'], textinfo='percent', textposition='inside', textfont=dict(color='white', size=11))])
+        f_b3.update_layout(height=110, margin=dict(l=0, r=0, t=0, b=0), showlegend=False, paper_bgcolor='#0b0f19', plot_bgcolor='#0b0f19', annotations=[dict(text=f"<b>{pcr:.2f}</b><br><span style='font-size:8px;'>{sig.split()[0]}</span>", x=0.5, y=0.5, font_size=15, font_color="white", showarrow=False)])
         st.plotly_chart(f_b3, use_container_width=True, config={'displayModeBar': False}, key="p_tot")
     
     with d_cols[1]:
-        tcd, tpd = df_display['ce_coi_day'].sum(), df_display['pe_coi_day'].sum()
-        d_pcr = (tpd/tcd) if tcd>0 else (9.9 if tpd>0 else 1.0); d_txt = "Bull" if d_pcr>1.0 else "Bear" if d_pcr<1.0 else "Neutral"
-        st.markdown(f"<div style='text-align:center; line-height:1.2;'><span style='font-size:11px; color:#38bdf8; font-weight:bold;'>Day COI Ratio</span><br><span style='font-size:13px; color:#fff; font-weight:bold;'>{d_pcr:.2f}</span><br><span style='font-size:9px; color:#cbd5e1;'>({d_txt})</span></div>", unsafe_allow_html=True)
-        f_dc = go.Figure(data=[go.Pie(labels=['C', 'P'], values=[abs(tcd) if tcd!=0 else 1, abs(tpd) if tpd!=0 else 1], hole=0.6, marker_colors=['#f87171', '#4ade80'], textinfo='percent', textfont=dict(color='white', size=10))])
-        f_dc.update_layout(height=110, margin=dict(l=0, r=0, t=5, b=5), showlegend=False, paper_bgcolor='#0b0f19')
+        d_txt = "Bull" if day_coi_pcr>1.0 else "Bear" if day_coi_pcr<1.0 else "Neutral"
+        st.markdown(f"<div style='text-align:center; line-height:1.2; margin-bottom: 2px;'><span style='font-size:11px; color:#38bdf8; font-weight:bold;'>Day COI</span></div>", unsafe_allow_html=True)
+        f_dc = go.Figure(data=[go.Pie(labels=['C', 'P'], values=[abs(total_ce_coi_day) if total_ce_coi_day!=0 else 1, abs(total_pe_coi_day) if total_pe_coi_day!=0 else 1], hole=0.6, marker_colors=['#f87171', '#4ade80'], textinfo='percent', textposition='inside', textfont=dict(color='white', size=11))])
+        f_dc.update_layout(height=110, margin=dict(l=0, r=0, t=0, b=0), showlegend=False, paper_bgcolor='#0b0f19', plot_bgcolor='#0b0f19', annotations=[dict(text=f"<b>{day_coi_pcr:.2f}</b><br><span style='font-size:8px;'>{d_txt}</span>", x=0.5, y=0.5, font_size=15, font_color="white", showarrow=False)])
         st.plotly_chart(f_dc, use_container_width=True, config={'displayModeBar': False}, key="d_dcoi")
 
-    for col, mins in zip(d_cols[2:], [3, 5, 15]):
+    # Compact & Leveled Net Flow Metric Boxes
+    for col, (label, val) in zip(d_cols[2:], mtf_flows.items()):
         with col:
-            if len(st.session_state.oi_snapshots) > 1:
-                tgt = now - datetime.timedelta(minutes=mins); snp = min(st.session_state.oi_snapshots, key=lambda x: abs(x[0] - tgt))
-                tm = pd.merge(df_current, snp[1], on='strike', suffixes=('', '_prev'))
-                cv, pv = (tm['ce_oi'] - tm['ce_oi_prev']).sum(), (tm['pe_oi'] - tm['pe_oi_prev']).sum()
-            else: cv, pv = 0, 0
-            i_p = (pv/cv) if cv>0 else (9.9 if cv<=0 and pv>0 else (0.01 if cv>0 and pv<=0 else 1.0))
-            b_t = "Bull" if i_p>1.0 else "Bear" if i_p<1.0 else "Neu"
-            
-            st.markdown(f"<div style='text-align:center; line-height:1.2;'><span style='font-size:11px; color:#facc15; font-weight:bold;'>Ratio ({mins}m)</span><br><span style='font-size:13px; color:#fff; font-weight:bold;'>{i_p:.2f}</span><br><span style='font-size:9px; color:#cbd5e1;'>({b_t})</span></div>", unsafe_allow_html=True)
-            f_p = go.Figure(data=[go.Pie(labels=['C', 'P'], values=[abs(cv) if cv!=0 else 1, abs(pv) if pv!=0 else 1], hole=0.6, marker_colors=['#f87171', '#4ade80'] if cv!=0 else ['#334155','#334155'], textinfo='percent' if cv!=0 else 'none', textfont=dict(color='white', size=10))])
-            f_p.update_layout(height=110, margin=dict(l=0, r=0, t=5, b=5), showlegend=False, paper_bgcolor='#0b0f19')
-            st.plotly_chart(f_p, use_container_width=True, config={'displayModeBar': False}, key=f"d_{mins}m")
+            color = "#4ade80" if val > 0 else "#f87171" if val < 0 else "#94a3b8"
+            sign = "+" if val > 0 else ""
+            txt_bias = "Bullish" if val > 0 else "Bearish" if val < 0 else "Neutral"
+            html = f"""
+            <div style='background-color:#0f172a; border:1px solid #1e293b; border-radius:4px; padding:6px 2px; text-align:center; height:110px; display:flex; flex-direction:column; justify-content:center;'>
+                <span style='font-size:10px; color:#facc15; font-weight:bold; white-space:nowrap;'>Net ({label})</span>
+                <span style='font-size:12px; color:{color}; font-weight:bold; margin-top:8px; white-space:nowrap;'>{sign}{format_oi(val)}</span>
+                <span style='font-size:9px; color:{color}; opacity:0.85; margin-top:4px;'>{txt_bias}</span>
+            </div>
+            """
+            st.markdown(html, unsafe_allow_html=True)
     
     st.markdown("</div>", unsafe_allow_html=True)
+    
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     st.markdown("<p style='font-size:11px; font-weight:700; margin: 0; color:#c084fc;'>📈 DIVERGENCE EDGE: Spot vs. Net Flow</p>", unsafe_allow_html=True)
     div_t, div_s, div_f = [], [], []
@@ -275,14 +296,20 @@ with bot_right:
     if div_t:
         fig_div.add_trace(go.Scatter(x=div_t, y=div_s, name="Spot", line=dict(color="#38bdf8", width=2)), secondary_y=False)
         fig_div.add_trace(go.Scatter(x=div_t, y=div_f, name="Flow", fill='tozeroy', fillcolor='rgba(250,204,21,0.1)', line=dict(color="#facc15", width=1.5)), secondary_y=True)
-    fig_div.update_layout(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), margin=dict(l=10, r=10, t=10, b=10), height=195, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0))
-    fig_div.update_yaxes(title_text="Spot", secondary_y=False, showgrid=True, gridcolor='#1e293b')
+    
+    # Strictly lock X-Axis from 9:15 AM to 4:00 PM
+    start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    end_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    
+    fig_div.update_layout(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), margin=dict(l=10, r=10, t=10, b=10), height=165, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0))
+    fig_div.update_xaxes(range=[start_dt, end_dt], tickformat="%H:%M", showgrid=True, gridcolor='#1e293b')
+    fig_div.update_yaxes(title_text="Spot", secondary_y=False, showgrid=False)
     fig_div.update_yaxes(title_text="Flow", secondary_y=True, showgrid=False)
     st.plotly_chart(fig_div, use_container_width=True, config={'displayModeBar': False}, key="c_div")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 🟪 BOTTOM ROW: NTM STRIKE ACTION & INSIGHT
+# 🟪 BOTTOM ROW: NTM STRIKE ACTION & PRO TRADER INSIGHT
 # ==========================================
 st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
 ntm_strikes = sorted(df_display['strike'].tolist(), key=lambda x: abs(x - spot_price))[:5]
@@ -299,27 +326,70 @@ def get_action(coi, is_ce):
     else: return ("Buildup", "#38bdf8") if coi > 0 else ("Unwinding", "#c084fc")
 
 table_html = "<table class='action-table'><tr><th>Call Action</th><th>Strike</th><th>Put Action</th></tr>"
-atm_ce_act, atm_pe_act = "Neutral", "Neutral"
 for strk in ntm_strikes:
     row = df_display[df_display['strike'] == strk].iloc[0]
     ce_a, ce_c = get_action(row['ce_coi'], True); pe_a, pe_c = get_action(row['pe_coi'], False)
-    if strk == atm_strike: atm_ce_act, atm_pe_act = ce_a, pe_a
     bg = "background-color: #1e293b;" if strk == atm_strike else ""
     table_html += f"<tr style='{bg}'><td style='color:{ce_c}'>{ce_a}</td><td style='color:#fff;'>{strk}</td><td style='color:{pe_c}'>{pe_a}</td></tr>"
 table_html += "</table>"
 
-insight = f"Mixed signals at ATM. Monitor broader net flow."
-if atm_ce_act == "Short Buildup" and atm_pe_act == "Short Buildup": insight = "Strong Straddle writing at ATM. Market consolidating; premium decay expected."
-elif atm_ce_act == "Short Buildup" and atm_pe_act in ["Long Unwinding", "Short Covering"]: insight = "Bearish dominance. Call writers building resistance, Put support weakening."
-elif atm_ce_act in ["Long Unwinding", "Short Covering"] and atm_pe_act == "Short Buildup": insight = "Bullish momentum. Put writers creating a floor, forcing Call writers to cover."
-elif atm_ce_act == "Long Buildup" and atm_pe_act == "Short Buildup": insight = "Highly Bullish. Call buyers aggressive while Put writers defend downside."
-elif atm_ce_act == "Short Buildup" and atm_pe_act == "Long Buildup": insight = "Highly Bearish. Put buyers aggressive while Call writers cap the upside."
+# --- TIMEFRAME ALIGNMENT ALGORITHM (AI INSIGHT) ---
+all_bull = all(flow_states.values())
+all_bear = not any(flow_states.values())
 
-ac1, ac2 = st.columns([1, 1.5])
+macro_bull = flow_states["1D"] and flow_states["60m"] and flow_states["30m"] and flow_states["15m"]
+macro_bear = not flow_states["1D"] and not flow_states["60m"] and not flow_states["30m"] and not flow_states["15m"]
+
+micro_bull = flow_states["3m"] and flow_states["5m"]
+micro_bear = not flow_states["3m"] and not flow_states["5m"]
+
+expert_verdict, user_action, my_action = "", "", ""
+
+if all_bull:
+    expert_verdict = "🟢 ALL-CLEAR TREND DAY (BULLISH): Every timeframe from 3m to 1D is showing positive Put writing flow. Buyers are in total control."
+    user_action = "Aggressive sizing. Buy every dip. Hold winners longer. Do not attempt to short."
+    my_action = f"Riding directional longs. Scaling into Call options or Futures. Trailing stop-loss just below {sup_strike}."
+elif all_bear:
+    expert_verdict = "🔴 ALL-CLEAR TREND DAY (BEARISH): Every timeframe from 3m to 1D is showing negative Call writing flow. Sellers are in total control."
+    user_action = "Aggressive sizing. Sell every rip. Hold winners longer. Do not attempt to buy."
+    my_action = f"Riding directional shorts. Scaling into Put options or short Futures. Trailing stop-loss just above {res_strike}."
+elif macro_bull and micro_bear:
+    expert_verdict = "🟡 THE 'BUY THE DIP' TRAP: The macro trend (15m to 1D) is Bullish, but micro momentum (3m, 5m) is pulling back. This is a mechanical trap."
+    user_action = "Wait for the 3m/5m flow to turn Green again, then enter long. Do not short the pullback."
+    my_action = f"Placing limit buy orders near {sup_strike}. Waiting for micro flow alignment to pull the trigger."
+elif macro_bear and micro_bull:
+    expert_verdict = "🟠 THE 'SELL THE RIP' TRAP: The macro trend (15m to 1D) is Bearish, but micro momentum (3m, 5m) is spiking. This is a dead-cat bounce."
+    user_action = "Wait for the 3m/5m flow to turn Red again, then enter short. Do not buy the breakout."
+    my_action = f"Placing limit sell orders near {res_strike}. Waiting for micro flow alignment to execute shorts."
+elif flow_states["15m"] != flow_states["60m"] or flow_states["30m"] != flow_states["1D"]:
+    expert_verdict = f"⚪ CHOP ZONE (DIVERGENCE): The intraday trend is fighting the daily structural trend. Market is trapped between {sup_strike} and {res_strike}."
+    user_action = "Reduce position sizing. Scalp strictly from support to resistance. Do not hold for big targets."
+    my_action = f"Deploying Iron Condors or Strangles to farm theta decay. Taking quick 10-15 point scalps on extreme edges."
+else:
+    if flow_states["1D"] and flow_states["3m"]:
+        expert_verdict = f"Moderate Bullish Continuation. Macro is Bullish and current 3m momentum aligns."
+        user_action = f"Focus on 'Buy on Dips' near the {atm_strike} or {sup_strike} zones."
+        my_action = f"Deploying Short Put Spreads to collect premium. Holding directional longs."
+    elif not flow_states["1D"] and not flow_states["3m"]:
+        expert_verdict = f"Moderate Bearish Continuation. Macro is Bearish and current 3m momentum aligns."
+        user_action = f"Focus on 'Sell on Rise' opportunities near {res_strike}."
+        my_action = f"Holding Short Call Spreads and initiating short scalps on pullbacks."
+    else:
+        expert_verdict = f"Mixed Flow. Macro and Micro are out of sync. Waiting for timeframe alignment."
+        user_action = "Stay cautious. Wait for 15m and 3m to align before committing size."
+        my_action = "Sitting on hands. Preserving capital until a high-probability alignment occurs."
+
+insight_html = f"""
+<div style='background-color:#0f172a; padding:8px 12px; border-radius:6px; font-size:11px; color:#f8fafc; border-left:4px solid #c084fc; height:100%;'>
+    <div style='margin-bottom:4px;'><span style='color:#c084fc; font-weight:bold;'>🧑‍💼 TRADER'S VERDICT:</span> {expert_verdict}</div>
+    <div style='margin-bottom:4px;'><span style='color:#38bdf8; font-weight:bold;'>💡 YOUR PLAY:</span> {user_action}</div>
+    <div><span style='color:#facc15; font-weight:bold;'>🎯 MY PLAY:</span> {my_action}</div>
+</div>
+"""
+
+ac1, ac2 = st.columns([1.1, 1.9])
 with ac1: st.markdown(table_html, unsafe_allow_html=True)
-with ac2:
-    st.markdown("<p style='font-size:11px; font-weight:700; color:#38bdf8; margin-bottom:5px;'>🧠 EXPERT AI INSIGHT (Based on ATM Action)</p>", unsafe_allow_html=True)
-    st.markdown(f"<div style='background-color:#1e293b; padding:10px; border-radius:6px; font-size:13px; color:#f8fafc; border-left:4px solid #38bdf8;'>{insight}</div>", unsafe_allow_html=True)
+with ac2: st.markdown(insight_html, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 if market_mode == "🟢 LIVE" and refresh_rate != "Manual":
