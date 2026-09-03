@@ -18,28 +18,50 @@ st.markdown("""
     <style>
     /* Force true fullscreen, remove all extra streamlit padding */
     [data-testid="collapsedControl"] { display: none; }
-    .block-container { padding: 0.2rem 0.5rem 0rem 0.5rem !important; max-width: 100% !important; overflow: hidden; }
     header, footer { visibility: hidden !important; height: 0px !important; margin: 0px !important; }
-    .stApp { background-color: #0b0f19; color: #f1f5f9; }
     
+    /* PREVENT SQUISHING: Force a hard minimum width so a scrollbar appears instead of breaking layout */
+    .stApp { 
+        background-color: #0b0f19; 
+        color: #f1f5f9; 
+        overflow-x: auto !important; 
+    }
+    .block-container { 
+        padding: 0.5rem 0.5rem 0rem 0.5rem !important; 
+        max-width: 100% !important; 
+        min-width: 1350px !important; /* Locks layout to desktop width */
+        overflow-x: hidden; 
+    }
+    
+    /* Locks columns to strictly stay side-by-side, NEVER stack into mobile view */
+    div[data-testid="stHorizontalBlock"] { 
+        flex-wrap: nowrap !important; 
+        gap: 6px !important; 
+    }
+    div[data-testid="column"] { 
+        min-width: 0 !important; 
+        width: 100% !important; 
+        flex: 1 1 0% !important; 
+    }
+
     /* Panel Containers */
     .panel-box { background-color: #111827; padding: 6px 10px; border-radius: 6px; border: 1px solid #1f2937; margin-bottom: 4px; }
     
-    /* Metrics */
-    div[data-testid="stMetricValue"] { font-size: 1.05rem !important; font-weight: 700 !important; color: #f8fafc; }
-    div[data-testid="stMetricLabel"] { font-size: 0.60rem !important; color: #94a3b8 !important; margin-bottom: -5px; text-transform: uppercase;}
+    /* Metrics Protection */
+    div[data-testid="stMetricValue"] { font-size: 1.05rem !important; font-weight: 700 !important; color: #f8fafc; white-space: nowrap !important; }
+    div[data-testid="stMetricLabel"] { font-size: 0.60rem !important; color: #94a3b8 !important; margin-bottom: -5px; text-transform: uppercase; white-space: nowrap !important; }
     
     /* Force Radio buttons horizontally */
     div[data-testid="stRadio"] > div { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 10px !important; }
     div[data-testid="stRadio"] label { font-size: 0.70rem !important; font-weight: 600; white-space: nowrap; }
     .stSelectbox label { font-size: 0.70rem !important; color: #94a3b8; display: none; }
-    .stCheckbox label { font-size: 0.70rem !important; font-weight: 600; }
+    .stCheckbox label { font-size: 0.70rem !important; font-weight: 600; white-space: nowrap; }
     .stMarkdown { margin-bottom: -15px; }
     
     /* Custom Tables */
     .action-table { width: 100%; text-align: center; border-collapse: collapse; font-size: 10px; }
-    .action-table th { padding: 2px; border-bottom: 1px solid #334155; color: #94a3b8; font-weight: normal; }
-    .action-table td { padding: 2px; font-weight: bold; }
+    .action-table th { padding: 2px; border-bottom: 1px solid #334155; color: #94a3b8; font-weight: normal; white-space: nowrap; }
+    .action-table td { padding: 2px; font-weight: bold; white-space: nowrap; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -48,6 +70,7 @@ if "oi_snapshots" not in st.session_state: st.session_state.oi_snapshots = []
 if "last_bias" not in st.session_state: st.session_state.last_bias = "NEUTRAL / RANGEBOUND"
 if "symbol" not in st.session_state: st.session_state.symbol = "NIFTY"
 if "last_fetch_time" not in st.session_state: st.session_state.last_fetch_time = None
+if "master_trend" not in st.session_state: st.session_state.master_trend = "⏳ AWAITING CROSSOVER"
 
 # --- 3. NSE Scraper Engine ---
 headers = {
@@ -74,6 +97,7 @@ def fetch_nse_data(symbol="NIFTY"):
 def format_oi(num):
     if abs(num) >= 10000000: return f"{num/10000000:.2f}Cr"
     elif abs(num) >= 100000: return f"{num/100000:.2f}L"
+    elif abs(num) >= 1000: return f"{num/1000:.1f}k"
     else: return f"{num:,.0f}"
 
 # ==========================================
@@ -145,7 +169,7 @@ with top_left:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Data Processing Engine
+# --- 4. Data Processing Engine & Global MTF Flows ---
 df_display = df_current.copy()
 prev_spot = None
 if timeframe != "Full Day" and len(st.session_state.oi_snapshots) > 1:
@@ -170,11 +194,35 @@ t_ce, t_pe = df_display['ce_oi'].sum(), df_display['pe_oi'].sum()
 tc_coi, tp_coi = df_display['ce_coi'].sum(), df_display['pe_coi'].sum()
 n_coi = tp_coi - tc_coi; pcr = t_pe / t_ce if t_ce > 0 else 1.0
 
-if n_coi > 25000 and pcr >= 1.0: sig, bd = "BULLISH (Put Writing)", "Long Buildup"
-elif n_coi < -25000 and pcr < 1.0: sig, bd = "BEARISH (Call Writing)", "Short Buildup"
-elif tc_coi < 0 and tp_coi >= 0: sig, bd = "SHORT COVERING", "Bulls Squeezing"
-elif tp_coi < 0 and tc_coi >= 0: sig, bd = "LONG UNWINDING", "Bears Breaking"
-else: sig, bd = "NEUTRAL / RANGEBOUND", "Straddle Writing"
+# Extract Net Flows globally for all panels
+mtf_flows = {}
+flow_states = {}
+for m in [1, 3, 5, 15, 30, 60]:
+    candidates = [x for x in st.session_state.oi_snapshots if x[0] < now]
+    if candidates:
+        tgt = now - datetime.timedelta(minutes=m)
+        snp = min(candidates, key=lambda x: abs(x[0] - tgt))
+        tm = pd.merge(df_current, snp[1], on='strike', suffixes=('', '_prev'))
+        if strike_filter != "All": tm = tm[abs(tm['strike'] - atm_strike) <= (int(strike_filter) * step)]
+        cv, pv = (tm['ce_oi'] - tm['ce_oi_prev']).sum(), (tm['pe_oi'] - tm['pe_oi_prev']).sum()
+    else: cv, pv = 0, 0
+    net_f = pv - cv
+    mtf_flows[f"{m}m"] = net_f
+    flow_states[f"{m}m"] = net_f > 0
+
+total_ce_coi_day, total_pe_coi_day = df_display['ce_coi_day'].sum(), df_display['pe_coi_day'].sum()
+day_net = total_pe_coi_day - total_ce_coi_day
+mtf_flows["1D"] = day_net
+flow_states["1D"] = day_net > 0
+day_coi_pcr = (total_pe_coi_day/total_ce_coi_day) if total_ce_coi_day>0 else (9.9 if total_pe_coi_day>0 else 1.0)
+
+# Evaluate Primary Intraday Bias (Price vs 15m Flow)
+if day_net > 0 and mtf_flows.get('15m', 0) > 0:
+    sig = "BULLISH (Put Writing)"
+elif day_net < 0 and mtf_flows.get('15m', 0) < 0:
+    sig = "BEARISH (Call Writing)"
+else:
+    sig = "NEUTRAL / RANGEBOUND"
 
 if enable_audio and sig != st.session_state.last_bias:
     components.html(f"""<script>var m=new SpeechSynthesisUtterance("Alert. Bias shifted to {sig.split('(')[0].strip()}");window.speechSynthesis.speak(m);</script>""", height=0, width=0)
@@ -184,17 +232,28 @@ with top_right:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     m1, m2, m3 = st.columns(3)
     m1.metric("Spot Price", f"{spot_price:,.2f}", f"ATM: {atm_strike}")
-    m2.metric("Max Pain", f"{max_pain}", f"Shift: {max_pain - atm_strike:+d}")
-    m3.metric("Intraday Bias", sig, f"PCR: {pcr:.2f}")
-    m4, m5 = st.columns([1, 2])
-    m4.metric("Walls (Sup/Res)", f"{sup_strike} | {res_strike}", f"Flow: {format_oi(n_coi)}")
-    m5.metric("Market Regime", bd, f"{timeframe} Window | {now.strftime('%H:%M:%S')}")
+    m2.metric("Intraday Bias", sig.split(" (")[0], f"PCR: {pcr:.2f}")
+    m3.metric("Walls (Sup | Res)", f"{sup_strike} | {res_strike}", f"Max Pain: {max_pain}")
+    
+    st.markdown("<hr style='margin: 4px 0px; border-color: #1e293b;'>", unsafe_allow_html=True)
+    
+    f1, f2, f3, f4 = st.columns(4)
+    def render_flow(col, label, key):
+        val = mtf_flows.get(key, 0)
+        sign = "+" if val > 0 else ""
+        delta_label = "Bullish" if val > 0 else "-Bearish" if val < 0 else "Neutral"
+        col.metric(label, f"{sign}{format_oi(val)}", delta_label)
+        
+    render_flow(f1, "1m Net Flow", "1m")
+    render_flow(f2, "3m Net Flow", "3m")
+    render_flow(f3, "5m Net Flow", "5m")
+    render_flow(f4, "15m Net Flow", "15m")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 🟦 MIDDLE ROW: SPLIT GRID LAYOUT
 # ==========================================
-bot_left, bot_mid, bot_right = st.columns([3.3, 1.7, 5.0])
+bot_left, bot_mid, bot_right = st.columns([3.2, 1.6, 5.2])
 chart_bg = dict(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), yaxis=dict(gridcolor='#1e293b'))
 
 with bot_left:
@@ -234,29 +293,8 @@ with bot_mid:
 with bot_right:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     
-    # Extract Net Flows for multi-timeframe alignment
-    mtf_flows = {}
-    flow_states = {}
-    
-    for m in [3, 5, 15, 30, 60]:
-        if len(st.session_state.oi_snapshots) > 1:
-            tgt = now - datetime.timedelta(minutes=m); snp = min(st.session_state.oi_snapshots, key=lambda x: abs(x[0] - tgt))
-            tm = pd.merge(df_current, snp[1], on='strike', suffixes=('', '_prev'))
-            if strike_filter != "All": tm = tm[abs(tm['strike'] - atm_strike) <= (int(strike_filter) * step)]
-            cv, pv = (tm['ce_oi'] - tm['ce_oi_prev']).sum(), (tm['pe_oi'] - tm['pe_oi_prev']).sum()
-        else: cv, pv = 0, 0
-        net_f = pv - cv
-        mtf_flows[f"{m}m"] = net_f
-        flow_states[f"{m}m"] = net_f > 0
-    
-    total_ce_coi_day, total_pe_coi_day = df_display['ce_coi_day'].sum(), df_display['pe_coi_day'].sum()
-    day_net = total_pe_coi_day - total_ce_coi_day
-    mtf_flows["1D"] = day_net
-    flow_states["1D"] = day_net > 0
-    day_coi_pcr = (total_pe_coi_day/total_ce_coi_day) if total_ce_coi_day>0 else (9.9 if total_pe_coi_day>0 else 1.0)
-
-    # 8-Column Grid for Donuts + Netflow Metrics
-    d_cols = st.columns([1.4, 1.4, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9])
+    # 9-Column Grid for Donuts + 7 Netflow Metrics
+    d_cols = st.columns([1.1, 1.1, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8])
     
     with d_cols[0]:
         st.markdown(f"<div style='text-align:center; line-height:1.2; margin-bottom: 2px;'><span style='font-size:11px; color:#94a3b8; font-weight:bold;'>Cum. Ratio</span></div>", unsafe_allow_html=True)
@@ -271,41 +309,131 @@ with bot_right:
         f_dc.update_layout(height=110, margin=dict(l=0, r=0, t=0, b=0), showlegend=False, paper_bgcolor='#0b0f19', plot_bgcolor='#0b0f19', annotations=[dict(text=f"<b>{day_coi_pcr:.2f}</b><br><span style='font-size:8px;'>{d_txt}</span>", x=0.5, y=0.5, font_size=15, font_color="white", showarrow=False)])
         st.plotly_chart(f_dc, use_container_width=True, config={'displayModeBar': False}, key="d_dcoi")
 
-    # Compact & Leveled Net Flow Metric Boxes
+    # Compact & Leveled Net Flow Metric Boxes with Auto-Scaling Font
     for col, (label, val) in zip(d_cols[2:], mtf_flows.items()):
         with col:
             color = "#4ade80" if val > 0 else "#f87171" if val < 0 else "#94a3b8"
             sign = "+" if val > 0 else ""
             txt_bias = "Bullish" if val > 0 else "Bearish" if val < 0 else "Neutral"
             html = f"""
-            <div style='background-color:#0f172a; border:1px solid #1e293b; border-radius:4px; padding:6px 2px; text-align:center; height:110px; display:flex; flex-direction:column; justify-content:center;'>
-                <span style='font-size:10px; color:#facc15; font-weight:bold; white-space:nowrap;'>Net ({label})</span>
-                <span style='font-size:12px; color:{color}; font-weight:bold; margin-top:8px; white-space:nowrap;'>{sign}{format_oi(val)}</span>
-                <span style='font-size:9px; color:{color}; opacity:0.85; margin-top:4px;'>{txt_bias}</span>
+            <div style='background-color:#0f172a; border:1px solid #1e293b; border-radius:4px; padding:4px 1px; text-align:center; height:110px; display:flex; flex-direction:column; justify-content:center; overflow:hidden; white-space:nowrap;'>
+                <span style='font-size:clamp(8px, 0.9vw, 10px); color:#facc15; font-weight:bold; text-overflow:ellipsis; overflow:hidden; display:block;'>Net ({label})</span>
+                <span style='font-size:clamp(11px, 1.2vw, 13px); color:{color}; font-weight:bold; margin-top:8px; text-overflow:ellipsis; overflow:hidden; display:block;'>{sign}{format_oi(val)}</span>
+                <span style='font-size:clamp(7px, 0.8vw, 9px); color:{color}; opacity:0.85; margin-top:4px; text-overflow:ellipsis; overflow:hidden; display:block;'>{txt_bias}</span>
             </div>
             """
             st.markdown(html, unsafe_allow_html=True)
     
     st.markdown("</div>", unsafe_allow_html=True)
     
+    # ==========================================
+    # 🚨 STRICT BINARY TREND TRACKER & 1-MIN CANDLESTICK CHART
+    # ==========================================
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
-    st.markdown("<p style='font-size:11px; font-weight:700; margin: 0; color:#c084fc;'>📈 DIVERGENCE EDGE: Spot vs. Net Flow</p>", unsafe_allow_html=True)
-    div_t, div_s, div_f = [], [], []
-    for s in st.session_state.oi_snapshots: div_t.append(s[0]); div_s.append(s[2]); div_f.append(s[1]['pe_coi_day'].sum() - s[1]['ce_coi_day'].sum())
-    fig_div = make_subplots(specs=[[{"secondary_y": True}]])
-    if div_t:
-        fig_div.add_trace(go.Scatter(x=div_t, y=div_s, name="Spot", line=dict(color="#38bdf8", width=2)), secondary_y=False)
-        fig_div.add_trace(go.Scatter(x=div_t, y=div_f, name="Flow", fill='tozeroy', fillcolor='rgba(250,204,21,0.1)', line=dict(color="#facc15", width=1.5)), secondary_y=True)
     
-    # Strictly lock X-Axis from 9:15 AM to 4:00 PM
-    start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    end_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    alert_bg, alert_tc, alert_bc = "transparent", "#94a3b8", "#334155"
     
-    fig_div.update_layout(plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19', font=dict(color='#94a3b8', size=10), margin=dict(l=10, r=10, t=10, b=10), height=165, legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0))
-    fig_div.update_xaxes(range=[start_dt, end_dt], tickformat="%H:%M", showgrid=True, gridcolor='#1e293b')
-    fig_div.update_yaxes(title_text="Spot", secondary_y=False, showgrid=False)
-    fig_div.update_yaxes(title_text="Flow", secondary_y=True, showgrid=False)
-    st.plotly_chart(fig_div, use_container_width=True, config={'displayModeBar': False}, key="c_div")
+    # Process OHLC and Flow Data
+    if len(st.session_state.oi_snapshots) > 0:
+        temp_data = []
+        for s in st.session_state.oi_snapshots:
+            df_s = s[1]
+            s_atm = int(round(s[2] / step) * step)
+            if strike_filter != "All":
+                limit = int(strike_filter) * step
+                df_s = df_s[abs(df_s['strike'] - s_atm) <= limit]
+            net_coi_val = df_s['pe_coi_day'].sum() - df_s['ce_coi_day'].sum()
+            temp_data.append({'time': s[0], 'spot': s[2], 'net': net_coi_val})
+            
+        chart_df = pd.DataFrame(temp_data).set_index('time')
+        
+        # Resample into 1-Minute OHLC Candles and Flow Series
+        ohlc_df = chart_df['spot'].resample('1min').ohlc().dropna()
+        flow_df = chart_df['net'].resample('1min').last().dropna()
+        
+        if len(ohlc_df) >= 15:
+            # 1. Calculate the core moving averages (3-min fast vs 15-min slow)
+            flow_3m = flow_df.iloc[-3:].mean()
+            flow_15m = flow_df.iloc[-15:].mean()
+            spot_15m_baseline = ohlc_df['close'].iloc[-15:].mean()
+            current_spot = ohlc_df['close'].iloc[-1]
+            
+            # 2. Define the STRICT crossover conditions
+            is_bullish_cross = (flow_3m > flow_15m) and (current_spot > spot_15m_baseline)
+            is_bearish_cross = (flow_3m < flow_15m) and (current_spot < spot_15m_baseline)
+            
+            # 3. Update the persistent state ONLY if a full crossover occurs.
+            if is_bullish_cross and st.session_state.master_trend != "🟢 BULLISH TREND (Hold Long)":
+                st.session_state.master_trend = "🟢 BULLISH TREND (Hold Long)"
+            elif is_bearish_cross and st.session_state.master_trend != "🔴 BEARISH TREND (Hold Short)":
+                st.session_state.master_trend = "🔴 BEARISH TREND (Hold Short)"
+                
+            # 4. Apply clean, binary styling based strictly on the current locked state
+            alert_signal = st.session_state.master_trend
+            
+            if "BULLISH" in alert_signal:
+                alert_bg, alert_tc, alert_bc = "rgba(34, 197, 94, 0.25)", "#4ade80", "#22c55e"
+            elif "BEARISH" in alert_signal:
+                alert_bg, alert_tc, alert_bc = "rgba(239, 68, 68, 0.25)", "#f87171", "#ef4444"
+        else:
+            alert_signal = "⏳ AWAITING 15-MIN DATA FOR TREND CALCULATION"
+
+        # Render UI Header
+        h1, h2 = st.columns([1, 1.5])
+        with h1:
+            st.markdown("<p style='font-size:11px; font-weight:700; margin-top: 4px; color:#c084fc;'>📈 PRICE ACTION VS NET FLOW</p>", unsafe_allow_html=True)
+        with h2:
+            st.markdown(f"<div style='background-color:{alert_bg}; border:1px solid {alert_bc}; border-radius:4px; padding:2px 0px; text-align:center; font-size:10px; font-weight:800; color:{alert_tc};'>{alert_signal}</div>", unsafe_allow_html=True)
+            
+        # Candlestick + Net Flow Plotting
+        fig_div = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Add 1-Minute OHLC Candlestick Trace
+        fig_div.add_trace(
+            go.Candlestick(
+                x=ohlc_df.index,
+                open=ohlc_df['open'], high=ohlc_df['high'], low=ohlc_df['low'], close=ohlc_df['close'],
+                name="Spot Action",
+                increasing_line_color='#22c55e', decreasing_line_color='#ef4444'
+            ),
+            secondary_y=False
+        )
+        
+        # Add Net Flow Area Chart
+        fig_div.add_trace(
+            go.Scatter(
+                x=flow_df.index, y=flow_df.values,
+                name="Net Flow",
+                fill='tozeroy', fillcolor='rgba(250,204,21,0.1)',
+                line=dict(color="#facc15", width=1.5)
+            ),
+            secondary_y=True
+        )
+        
+        # Determine current time bounds for initial render
+        start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        end_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        fig_div.update_layout(
+            plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19',
+            font=dict(color='#94a3b8', size=10),
+            margin=dict(l=10, r=10, t=10, b=10),
+            height=220,
+            legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0),
+            xaxis_rangeslider_visible=False # Hidden for clean rendering, zoom handled by scroll
+        )
+        fig_div.update_xaxes(range=[start_dt, end_dt], tickformat="%H:%M", showgrid=True, gridcolor='#1e293b')
+        fig_div.update_yaxes(title_text="Spot", secondary_y=False, showgrid=False)
+        fig_div.update_yaxes(title_text="Flow", secondary_y=True, showgrid=False)
+        
+        # ENABLED CHART ZOOM & PAN CONTROLS
+        st.plotly_chart(fig_div, use_container_width=True, config={
+            'displayModeBar': True,       # Shows the top-right toolbar 
+            'scrollZoom': True,           # Allows mouse-wheel zoom in and out
+            'displaylogo': False,
+            'modeBarButtonsToAdd': ['drawline', 'eraseshape']
+        }, key="c_div")
+    
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
@@ -340,26 +468,26 @@ all_bear = not any(flow_states.values())
 macro_bull = flow_states["1D"] and flow_states["60m"] and flow_states["30m"] and flow_states["15m"]
 macro_bear = not flow_states["1D"] and not flow_states["60m"] and not flow_states["30m"] and not flow_states["15m"]
 
-micro_bull = flow_states["3m"] and flow_states["5m"]
-micro_bear = not flow_states["3m"] and not flow_states["5m"]
+micro_bull = flow_states["1m"] and flow_states["3m"] and flow_states["5m"]
+micro_bear = not flow_states["1m"] and not flow_states["3m"] and not flow_states["5m"]
 
 expert_verdict, user_action, my_action = "", "", ""
 
 if all_bull:
-    expert_verdict = "🟢 ALL-CLEAR TREND DAY (BULLISH): Every timeframe from 3m to 1D is showing positive Put writing flow. Buyers are in total control."
+    expert_verdict = "🟢 ALL-CLEAR TREND DAY (BULLISH): Every timeframe from 1m to 1D is showing positive Put writing flow. Buyers are in total control."
     user_action = "Aggressive sizing. Buy every dip. Hold winners longer. Do not attempt to short."
     my_action = f"Riding directional longs. Scaling into Call options or Futures. Trailing stop-loss just below {sup_strike}."
 elif all_bear:
-    expert_verdict = "🔴 ALL-CLEAR TREND DAY (BEARISH): Every timeframe from 3m to 1D is showing negative Call writing flow. Sellers are in total control."
+    expert_verdict = "🔴 ALL-CLEAR TREND DAY (BEARISH): Every timeframe from 1m to 1D is showing negative Call writing flow. Sellers are in total control."
     user_action = "Aggressive sizing. Sell every rip. Hold winners longer. Do not attempt to buy."
     my_action = f"Riding directional shorts. Scaling into Put options or short Futures. Trailing stop-loss just above {res_strike}."
 elif macro_bull and micro_bear:
-    expert_verdict = "🟡 THE 'BUY THE DIP' TRAP: The macro trend (15m to 1D) is Bullish, but micro momentum (3m, 5m) is pulling back. This is a mechanical trap."
-    user_action = "Wait for the 3m/5m flow to turn Green again, then enter long. Do not short the pullback."
+    expert_verdict = "🟡 THE 'BUY THE DIP' TRAP: The macro trend (15m to 1D) is Bullish, but micro momentum (1m, 3m, 5m) is pulling back. This is a mechanical trap."
+    user_action = "Wait for the micro flow to turn Green again, then enter long. Do not short the pullback."
     my_action = f"Placing limit buy orders near {sup_strike}. Waiting for micro flow alignment to pull the trigger."
 elif macro_bear and micro_bull:
-    expert_verdict = "🟠 THE 'SELL THE RIP' TRAP: The macro trend (15m to 1D) is Bearish, but micro momentum (3m, 5m) is spiking. This is a dead-cat bounce."
-    user_action = "Wait for the 3m/5m flow to turn Red again, then enter short. Do not buy the breakout."
+    expert_verdict = "🟠 THE 'SELL THE RIP' TRAP: The macro trend (15m to 1D) is Bearish, but micro momentum (1m, 3m, 5m) is spiking. This is a dead-cat bounce."
+    user_action = "Wait for the micro flow to turn Red again, then enter short. Do not buy the breakout."
     my_action = f"Placing limit sell orders near {res_strike}. Waiting for micro flow alignment to execute shorts."
 elif flow_states["15m"] != flow_states["60m"] or flow_states["30m"] != flow_states["1D"]:
     expert_verdict = f"⚪ CHOP ZONE (DIVERGENCE): The intraday trend is fighting the daily structural trend. Market is trapped between {sup_strike} and {res_strike}."
