@@ -135,15 +135,55 @@ with top_left:
         df_current = pd.DataFrame(rows).sort_values('strike').reset_index(drop=True)
         now = datetime.datetime.now()
         
+        # --- MODIFIED: GitHub API Integration for File Saving ---
         if not df_current.empty:
-            file_path = os.path.join(DB_DIR, f"{symbol}_{now.strftime('%Y-%m-%d')}.csv")
-            df_save = df_current.copy(); df_save['timestamp'] = now.strftime("%Y-%m-%d %H:%M:%S"); df_save['spot_price'] = spot_price
+            file_name = f"{symbol}_{now.strftime('%Y-%m-%d')}.csv"
+            file_path = os.path.join(DB_DIR, file_name)
+            
+            df_save = df_current.copy()
+            df_save['timestamp'] = now.strftime("%Y-%m-%d %H:%M:%S")
+            df_save['spot_price'] = spot_price
+            
             if st.session_state.last_fetch_time != df_save['timestamp'].iloc[0][:16]:
-                if os.path.exists(file_path): df_save.to_csv(file_path, mode='a', header=False, index=False)
-                else: df_save.to_csv(file_path, index=False)
+                # Save locally for the current session
+                if os.path.exists(file_path): 
+                    df_save.to_csv(file_path, mode='a', header=False, index=False)
+                else: 
+                    df_save.to_csv(file_path, index=False)
+                    
                 st.session_state.last_fetch_time = df_save['timestamp'].iloc[0][:16]
-            st.session_state.oi_snapshots.append((now, df_current.copy(), spot_price))
-            st.session_state.oi_snapshots = st.session_state.oi_snapshots[-240:]
+                st.session_state.oi_snapshots.append((now, df_current.copy(), spot_price))
+                st.session_state.oi_snapshots = st.session_state.oi_snapshots[-240:]
+                
+                # Push back to GitHub using Streamlit Secrets
+                try:
+                    from github import Github
+                    if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+                        g = Github(st.secrets["GITHUB_TOKEN"])
+                        repo = g.get_repo(st.secrets["GITHUB_REPO"]) 
+                        git_file_path = f"{DB_DIR}/{file_name}"
+                        
+                        with open(file_path, "r") as f:
+                            file_content = f.read()
+                            
+                        try:
+                            # Update existing file
+                            contents = repo.get_contents(git_file_path)
+                            repo.update_file(
+                                contents.path, 
+                                f"🤖 OI Update: {now.strftime('%H:%M')}", 
+                                file_content, 
+                                contents.sha
+                            )
+                        except:
+                            # Create new file if it's the first run of the day
+                            repo.create_file(
+                                git_file_path, 
+                                f"🚀 Initial DB commit for {now.strftime('%Y-%m-%d')}", 
+                                file_content
+                            )
+                except Exception as e:
+                    pass # Silent pass to avoid breaking the Streamlit UI on temporary GitHub API errors
 
     else:
         refresh_rate, enable_audio = "Manual", False
@@ -327,13 +367,10 @@ with bot_right:
     st.markdown("</div>", unsafe_allow_html=True)
     
     # ==========================================
-    # 🚨 STRICT BINARY TREND TRACKER & 1-MIN CANDLESTICK CHART
+    # 🚨 1-MIN TOTAL CE & PE FLOW BAR CHART
     # ==========================================
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     
-    alert_bg, alert_tc, alert_bc = "transparent", "#94a3b8", "#334155"
-    
-    # Process OHLC and Flow Data
     if len(st.session_state.oi_snapshots) > 0:
         temp_data = []
         for s in st.session_state.oi_snapshots:
@@ -342,73 +379,62 @@ with bot_right:
             if strike_filter != "All":
                 limit = int(strike_filter) * step
                 df_s = df_s[abs(df_s['strike'] - s_atm) <= limit]
-            net_coi_val = df_s['pe_coi_day'].sum() - df_s['ce_coi_day'].sum()
-            temp_data.append({'time': s[0], 'spot': s[2], 'net': net_coi_val})
+            
+            # Sum up cumulative change in OI for CE and PE
+            ce_flow = df_s['ce_coi_day'].sum()
+            pe_flow = df_s['pe_coi_day'].sum()
+            temp_data.append({'time': s[0], 'ce_flow': ce_flow, 'pe_flow': pe_flow})
             
         chart_df = pd.DataFrame(temp_data).set_index('time')
         
-        # Resample into 1-Minute OHLC Candles and Flow Series
-        ohlc_df = chart_df['spot'].resample('1min').ohlc().dropna()
-        flow_df = chart_df['net'].resample('1min').last().dropna()
+        # Resample into 1-Minute intervals
+        ce_flow_df = chart_df['ce_flow'].resample('1min').last().dropna()
+        pe_flow_df = chart_df['pe_flow'].resample('1min').last().dropna()
         
-        if len(ohlc_df) >= 15:
-            # 1. Calculate the core moving averages (3-min fast vs 15-min slow)
-            flow_3m = flow_df.iloc[-3:].mean()
-            flow_15m = flow_df.iloc[-15:].mean()
-            spot_15m_baseline = ohlc_df['close'].iloc[-15:].mean()
-            current_spot = ohlc_df['close'].iloc[-1]
+        # --- BIAS & RECOMMENDATION LOGIC ---
+        if len(ce_flow_df) >= 1:
+            recent_ce = ce_flow_df.iloc[-1]
+            recent_pe = pe_flow_df.iloc[-1]
             
-            # 2. Define the STRICT crossover conditions
-            is_bullish_cross = (flow_3m > flow_15m) and (current_spot > spot_15m_baseline)
-            is_bearish_cross = (flow_3m < flow_15m) and (current_spot < spot_15m_baseline)
-            
-            # 3. Update the persistent state ONLY if a full crossover occurs.
-            if is_bullish_cross and st.session_state.master_trend != "🟢 BULLISH TREND (Hold Long)":
-                st.session_state.master_trend = "🟢 BULLISH TREND (Hold Long)"
-            elif is_bearish_cross and st.session_state.master_trend != "🔴 BEARISH TREND (Hold Short)":
-                st.session_state.master_trend = "🔴 BEARISH TREND (Hold Short)"
-                
-            # 4. Apply clean, binary styling based strictly on the current locked state
-            alert_signal = st.session_state.master_trend
-            
-            if "BULLISH" in alert_signal:
+            # Evaluate dominant flow to determine bias
+            if recent_pe > recent_ce and recent_pe > 0:
+                alert_signal = "🟢 BULLISH (Put Writing Dominates)"
+                recommendation = "Buy the Dip. Look for long setups at support."
                 alert_bg, alert_tc, alert_bc = "rgba(34, 197, 94, 0.25)", "#4ade80", "#22c55e"
-            elif "BEARISH" in alert_signal:
+            elif recent_ce > recent_pe and recent_ce > 0:
+                alert_signal = "🔴 BEARISH (Call Writing Dominates)"
+                recommendation = "Sell the Rip. Look for short setups at resistance."
                 alert_bg, alert_tc, alert_bc = "rgba(239, 68, 68, 0.25)", "#f87171", "#ef4444"
+            else:
+                alert_signal = "⚪ NEUTRAL / MIXED FLOW"
+                recommendation = "Scalp extremes or wait for clear flow divergence."
+                alert_bg, alert_tc, alert_bc = "transparent", "#94a3b8", "#334155"
         else:
-            alert_signal = "⏳ AWAITING 15-MIN DATA FOR TREND CALCULATION"
+            alert_signal = "⏳ AWAITING DATA"
+            recommendation = "Need more ticks to compute flow bias."
+            alert_bg, alert_tc, alert_bc = "transparent", "#94a3b8", "#334155"
 
         # Render UI Header
-        h1, h2 = st.columns([1, 1.5])
+        h1, h2 = st.columns([1, 2.5])
         with h1:
-            st.markdown("<p style='font-size:11px; font-weight:700; margin-top: 4px; color:#c084fc;'>📈 PRICE ACTION VS NET FLOW</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-size:11px; font-weight:700; margin-top: 4px; color:#38bdf8;'>📊 1-MIN CE & PE CUMULATIVE FLOW</p>", unsafe_allow_html=True)
         with h2:
-            st.markdown(f"<div style='background-color:{alert_bg}; border:1px solid {alert_bc}; border-radius:4px; padding:2px 0px; text-align:center; font-size:10px; font-weight:800; color:{alert_tc};'>{alert_signal}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='background-color:{alert_bg}; border:1px solid {alert_bc}; border-radius:4px; padding:2px 0px; text-align:center; font-size:10px; font-weight:800; color:{alert_tc};'>{alert_signal} | REC: {recommendation}</div>", unsafe_allow_html=True)
             
-        # Candlestick + Net Flow Plotting
-        fig_div = make_subplots(specs=[[{"secondary_y": True}]])
+        # 1-Minute Bar Chart Plotting
+        fig_div = go.Figure()
         
-        # Add 1-Minute OHLC Candlestick Trace
-        fig_div.add_trace(
-            go.Candlestick(
-                x=ohlc_df.index,
-                open=ohlc_df['open'], high=ohlc_df['high'], low=ohlc_df['low'], close=ohlc_df['close'],
-                name="Spot Action",
-                increasing_line_color='#22c55e', decreasing_line_color='#ef4444'
-            ),
-            secondary_y=False
-        )
+        # Add CE Flow Bars
+        fig_div.add_trace(go.Bar(
+            x=ce_flow_df.index, y=ce_flow_df.values,
+            name="Call ΔOI (CE)", marker_color='#ef4444'
+        ))
         
-        # Add Net Flow Area Chart
-        fig_div.add_trace(
-            go.Scatter(
-                x=flow_df.index, y=flow_df.values,
-                name="Net Flow",
-                fill='tozeroy', fillcolor='rgba(250,204,21,0.1)',
-                line=dict(color="#facc15", width=1.5)
-            ),
-            secondary_y=True
-        )
+        # Add PE Flow Bars
+        fig_div.add_trace(go.Bar(
+            x=pe_flow_df.index, y=pe_flow_df.values,
+            name="Put ΔOI (PE)", marker_color='#22c55e'
+        ))
         
         # Determine current time bounds for initial render
         start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -419,21 +445,19 @@ with bot_right:
             font=dict(color='#94a3b8', size=10),
             margin=dict(l=10, r=10, t=10, b=10),
             height=220,
+            barmode='group',
             legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0),
-            xaxis_rangeslider_visible=False # Hidden for clean rendering, zoom handled by scroll
+            xaxis_rangeslider_visible=False 
         )
         fig_div.update_xaxes(range=[start_dt, end_dt], tickformat="%H:%M", showgrid=True, gridcolor='#1e293b')
-        fig_div.update_yaxes(title_text="Spot", secondary_y=False, showgrid=False)
-        fig_div.update_yaxes(title_text="Flow", secondary_y=True, showgrid=False)
+        fig_div.update_yaxes(title_text="Total Flow (COI)", showgrid=True, gridcolor='#1e293b')
         
-        # ENABLED CHART ZOOM & PAN CONTROLS
         st.plotly_chart(fig_div, use_container_width=True, config={
-            'displayModeBar': True,       # Shows the top-right toolbar 
-            'scrollZoom': True,           # Allows mouse-wheel zoom in and out
-            'displaylogo': False,
-            'modeBarButtonsToAdd': ['drawline', 'eraseshape']
+            'displayModeBar': True,
+            'scrollZoom': True,
+            'displaylogo': False
         }, key="c_div")
-    
+        
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
