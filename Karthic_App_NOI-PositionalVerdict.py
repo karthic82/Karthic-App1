@@ -4,9 +4,13 @@ import requests
 import datetime
 import time
 import os
+from zoneinfo import ZoneInfo
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit.components.v1 as components
+
+# Timezone Definition for Indian Standard Time
+IST = ZoneInfo("Asia/Kolkata")
 
 # --- 1. Database & Extreme CSS Optimization ---
 st.set_page_config(page_title="NIFTY OI Command Center", layout="wide", initial_sidebar_state="collapsed")
@@ -133,9 +137,10 @@ with top_left:
         
         rows = [{'strike': int(i.get('strikePrice', 0)), 'ce_oi': int(i.get('CE', {}).get('openInterest', 0)), 'ce_coi_day': int(i.get('CE', {}).get('changeinOpenInterest', 0)), 'pe_oi': int(i.get('PE', {}).get('openInterest', 0)), 'pe_coi_day': int(i.get('PE', {}).get('changeinOpenInterest', 0))} for i in records if i.get("expiryDate") == selected_expiry or not i.get("expiryDate")]
         df_current = pd.DataFrame(rows).sort_values('strike').reset_index(drop=True)
-        now = datetime.datetime.now()
         
-        # --- MODIFIED: GitHub API Integration for File Saving ---
+        # Explicit IST Timestamp
+        now = datetime.datetime.now(IST).replace(tzinfo=None)
+        
         if not df_current.empty:
             file_name = f"{symbol}_{now.strftime('%Y-%m-%d')}.csv"
             file_path = os.path.join(DB_DIR, file_name)
@@ -145,7 +150,6 @@ with top_left:
             df_save['spot_price'] = spot_price
             
             if st.session_state.last_fetch_time != df_save['timestamp'].iloc[0][:16]:
-                # Save locally for the current session
                 if os.path.exists(file_path): 
                     df_save.to_csv(file_path, mode='a', header=False, index=False)
                 else: 
@@ -155,35 +159,22 @@ with top_left:
                 st.session_state.oi_snapshots.append((now, df_current.copy(), spot_price))
                 st.session_state.oi_snapshots = st.session_state.oi_snapshots[-240:]
                 
-                # Push back to GitHub using Streamlit Secrets
+                # Push to GitHub
                 try:
                     from github import Github
                     if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
                         g = Github(st.secrets["GITHUB_TOKEN"])
                         repo = g.get_repo(st.secrets["GITHUB_REPO"]) 
                         git_file_path = f"{DB_DIR}/{file_name}"
-                        
                         with open(file_path, "r") as f:
                             file_content = f.read()
-                            
                         try:
-                            # Update existing file
                             contents = repo.get_contents(git_file_path)
-                            repo.update_file(
-                                contents.path, 
-                                f"🤖 OI Update: {now.strftime('%H:%M')}", 
-                                file_content, 
-                                contents.sha
-                            )
-                        except:
-                            # Create new file if it's the first run of the day
-                            repo.create_file(
-                                git_file_path, 
-                                f"🚀 Initial DB commit for {now.strftime('%Y-%m-%d')}", 
-                                file_content
-                            )
-                except Exception as e:
-                    pass # Silent pass to avoid breaking the Streamlit UI on temporary GitHub API errors
+                            repo.update_file(contents.path, f"🤖 OI Update: {now.strftime('%H:%M')} IST", file_content, contents.sha)
+                        except Exception:
+                            repo.create_file(git_file_path, f"🚀 Initial DB commit for {now.strftime('%Y-%m-%d')}", file_content)
+                except Exception:
+                    pass
 
     else:
         refresh_rate, enable_audio = "Manual", False
@@ -194,13 +185,21 @@ with top_left:
         st.markdown("<hr style='margin: 4px 0px; border-color: #1e293b;'>", unsafe_allow_html=True)
         
         filepath = os.path.join(DB_DIR, f"{symbol}_{sel_date}.csv")
-        hist_df = pd.read_csv(filepath); hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
+        hist_df = pd.read_csv(filepath)
+        hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
+        
+        # AUTO-CONVERT UTC HISTORICAL DATA TO IST:
+        # If the file starts before 07:00 AM, it was recorded in UTC on Cloud; adjust by +5h30m
+        if not hist_df.empty and hist_df['timestamp'].dt.hour.min() < 7:
+            hist_df['timestamp'] = hist_df['timestamp'] + pd.Timedelta(hours=5, minutes=30)
+            
         unique_times = hist_df['timestamp'].dt.strftime("%H:%M:%S").unique()
         
         rc1, rc2 = st.columns([3, 1])
         with rc1: timeframe = st.radio("Velocity Window", ["1 min", "3 min", "5 min", "10 min", "15 min", "30 min", "1 hr", "Full Day"], horizontal=True, index=1)
         with rc2: sel_time_str = st.select_slider("Time", options=unique_times, value=unique_times[-1], label_visibility="collapsed")
         
+        # Replay target timestamp
         target_dt = pd.to_datetime(f"{sel_date} {sel_time_str}")
         past_data = hist_df[hist_df['timestamp'] <= target_dt]
         st.session_state.oi_snapshots = [(ts, grp[['strike', 'ce_oi', 'ce_coi_day', 'pe_oi', 'pe_coi_day']].copy(), grp['spot_price'].iloc[0]) for ts, grp in past_data.groupby('timestamp')]
@@ -367,7 +366,7 @@ with bot_right:
     st.markdown("</div>", unsafe_allow_html=True)
     
     # ==========================================
-    # 🚨 1-MIN TOTAL CE & PE FLOW BAR CHART
+    # 🚨 1-MIN TOTAL CE & PE FLOW BAR CHART (9:05 AM TO 3:45 PM IST)
     # ==========================================
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     
@@ -380,7 +379,6 @@ with bot_right:
                 limit = int(strike_filter) * step
                 df_s = df_s[abs(df_s['strike'] - s_atm) <= limit]
             
-            # Sum up cumulative change in OI for CE and PE
             ce_flow = df_s['ce_coi_day'].sum()
             pe_flow = df_s['pe_coi_day'].sum()
             temp_data.append({'time': s[0], 'ce_flow': ce_flow, 'pe_flow': pe_flow})
@@ -391,12 +389,24 @@ with bot_right:
         ce_flow_df = chart_df['ce_flow'].resample('1min').last().dropna()
         pe_flow_df = chart_df['pe_flow'].resample('1min').last().dropna()
         
-        # --- BIAS & RECOMMENDATION LOGIC ---
-        if len(ce_flow_df) >= 1:
-            recent_ce = ce_flow_df.iloc[-1]
-            recent_pe = pe_flow_df.iloc[-1]
+        # Define strict IST market session bounds: 9:05 AM to 3:45 PM
+        start_dt = now.replace(hour=9, minute=5, second=0, microsecond=0)
+        end_dt = now.replace(hour=15, minute=45, second=0, microsecond=0)
+        
+        # Filter out post-market flatline artifacts
+        plot_ce = ce_flow_df[(ce_flow_df.index >= start_dt) & (ce_flow_df.index <= end_dt)]
+        plot_pe = pe_flow_df[(pe_flow_df.index >= start_dt) & (pe_flow_df.index <= end_dt)]
+        
+        # If user is reviewing early in the morning before 9:05, fallback gracefully
+        if plot_ce.empty:
+            plot_ce = ce_flow_df
+            plot_pe = pe_flow_df
             
-            # Evaluate dominant flow to determine bias
+        # --- BIAS & RECOMMENDATION LOGIC ---
+        if len(plot_ce) >= 1:
+            recent_ce = plot_ce.iloc[-1]
+            recent_pe = plot_pe.iloc[-1]
+            
             if recent_pe > recent_ce and recent_pe > 0:
                 alert_signal = "🟢 BULLISH (Put Writing Dominates)"
                 recommendation = "Buy the Dip. Look for long setups at support."
@@ -417,28 +427,22 @@ with bot_right:
         # Render UI Header
         h1, h2 = st.columns([1, 2.5])
         with h1:
-            st.markdown("<p style='font-size:11px; font-weight:700; margin-top: 4px; color:#38bdf8;'>📊 1-MIN CE & PE CUMULATIVE FLOW</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-size:11px; font-weight:700; margin-top: 4px; color:#38bdf8;'>📊 1-MIN CE & PE CUMULATIVE FLOW (IST)</p>", unsafe_allow_html=True)
         with h2:
             st.markdown(f"<div style='background-color:{alert_bg}; border:1px solid {alert_bc}; border-radius:4px; padding:2px 0px; text-align:center; font-size:10px; font-weight:800; color:{alert_tc};'>{alert_signal} | REC: {recommendation}</div>", unsafe_allow_html=True)
             
         # 1-Minute Bar Chart Plotting
         fig_div = go.Figure()
         
-        # Add CE Flow Bars
         fig_div.add_trace(go.Bar(
-            x=ce_flow_df.index, y=ce_flow_df.values,
+            x=plot_ce.index, y=plot_ce.values,
             name="Call ΔOI (CE)", marker_color='#ef4444'
         ))
         
-        # Add PE Flow Bars
         fig_div.add_trace(go.Bar(
-            x=pe_flow_df.index, y=pe_flow_df.values,
+            x=plot_pe.index, y=plot_pe.values,
             name="Put ΔOI (PE)", marker_color='#22c55e'
         ))
-        
-        # Determine current time bounds for initial render
-        start_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
-        end_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
         
         fig_div.update_layout(
             plot_bgcolor='#0b0f19', paper_bgcolor='#0b0f19',
@@ -449,6 +453,8 @@ with bot_right:
             legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1.0),
             xaxis_rangeslider_visible=False 
         )
+        
+        # Pinned strictly from 9:05 AM to 3:45 PM IST
         fig_div.update_xaxes(range=[start_dt, end_dt], tickformat="%H:%M", showgrid=True, gridcolor='#1e293b')
         fig_div.update_yaxes(title_text="Total Flow (COI)", showgrid=True, gridcolor='#1e293b')
         
