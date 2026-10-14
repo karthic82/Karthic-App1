@@ -63,9 +63,9 @@ st.markdown("""
     .stMarkdown { margin-bottom: -15px; }
     
     /* Custom Tables */
-    .action-table { width: 100%; text-align: center; border-collapse: collapse; font-size: 10px; }
-    .action-table th { padding: 2px; border-bottom: 1px solid #334155; color: #94a3b8; font-weight: normal; white-space: nowrap; }
-    .action-table td { padding: 2px; font-weight: bold; white-space: nowrap; }
+    .action-table { width: 100%; text-align: center; border-collapse: collapse; font-size: 12px; }
+    .action-table th { padding: 4px; border-bottom: 2px solid #334155; color: #94a3b8; font-weight: bold; white-space: nowrap; }
+    .action-table td { padding: 4px; font-weight: bold; white-space: nowrap; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -76,27 +76,73 @@ if "symbol" not in st.session_state: st.session_state.symbol = "NIFTY"
 if "last_fetch_time" not in st.session_state: st.session_state.last_fetch_time = None
 if "master_trend" not in st.session_state: st.session_state.master_trend = "⏳ AWAITING CROSSOVER"
 
-# --- 3. NSE Scraper Engine ---
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-    'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://www.nseindia.com/option-chain', 'Connection': 'keep-alive'
+# --- 3. NSE Scraper Engine (Adapted from Main.py NSEClient) ---
+NSE_HOME_URL = "https://www.nseindia.com"
+NSE_OPTION_CHAIN_PAGE = "https://www.nseindia.com/option-chain"
+NSE_OPTION_CONTRACT_INFO_API = "https://www.nseindia.com/api/option-chain-contract-info"
+NSE_OPTION_CHAIN_API = "https://www.nseindia.com/api/option-chain-v3"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": NSE_OPTION_CHAIN_PAGE,
+    "Connection": "keep-alive",
 }
+
+def _request_json_with_retry(session: requests.Session, url: str, params: dict = None, retries: int = 3) -> dict:
+    """Replicates Main.py NSEClient._request_json with warm-up hits and backoff."""
+    last_error = None
+    for attempt in range(retries):
+        try:
+            if attempt == 0:
+                session.get(NSE_HOME_URL, timeout=10)
+                session.get(NSE_OPTION_CHAIN_PAGE, timeout=10)
+            response = session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.7 * (attempt + 1))
+    return None
 
 @st.cache_data(ttl=60)
 def fetch_nse_data(symbol="NIFTY"):
+    """
+    Fetches contract expiries and option chain data using the exact
+    two-step call pattern and session initialization from Main.py.
+    """
     session = requests.Session()
+    session.headers.update(HEADERS)
+    symbol = symbol.upper()
+
     try:
-        session.get("https://www.nseindia.com", headers=headers, timeout=8)
-        session.get("https://www.nseindia.com/option-chain", headers=headers, timeout=8)
-        c_res = session.get(f"https://www.nseindia.com/api/option-chain-contract-info?symbol={symbol}", headers=headers, timeout=8)
-        c_res.raise_for_status()
-        expiries = c_res.json().get("expiryDates", [])
-        if not expiries: return None, []
-        chain_res = session.get(f"https://www.nseindia.com/api/option-chain-v3?type=Indices&symbol={symbol}&expiry={expiries[0]}", headers=headers, timeout=8)
-        chain_res.raise_for_status()
-        return chain_res.json(), expiries
-    except Exception: return None, []
+        # Step 1: Fetch contract info for expiry dates
+        contract = _request_json_with_retry(session, NSE_OPTION_CONTRACT_INFO_API, {"symbol": symbol}, retries=3)
+        if not contract:
+            return None, []
+        
+        expiries = contract.get("expiryDates") or []
+        if not expiries:
+            return None, []
+
+        # Step 2: Fetch option chain for the nearest expiry
+        chain_data = _request_json_with_retry(
+            session,
+            NSE_OPTION_CHAIN_API,
+            {"type": "Indices", "symbol": symbol, "expiry": expiries[0]},
+            retries=3,
+        )
+        if not chain_data:
+            return None, []
+
+        return chain_data, expiries
+    except Exception:
+        return None, []
 
 def format_oi(num):
     if abs(num) >= 10000000: return f"{num/10000000:.2f}Cr"
@@ -189,7 +235,6 @@ with top_left:
         hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'])
         
         # AUTO-CONVERT UTC HISTORICAL DATA TO IST:
-        # If the file starts before 07:00 AM, it was recorded in UTC on Cloud; adjust by +5h30m
         if not hist_df.empty and hist_df['timestamp'].dt.hour.min() < 7:
             hist_df['timestamp'] = hist_df['timestamp'] + pd.Timedelta(hours=5, minutes=30)
             
@@ -467,10 +512,12 @@ with bot_right:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 🟪 BOTTOM ROW: NTM STRIKE ACTION & PRO TRADER INSIGHT
+# 🟪 BOTTOM ROW: EXPANDED NTM STRIKE ACTION
 # ==========================================
 st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
-ntm_strikes = sorted(df_display['strike'].tolist(), key=lambda x: abs(x - spot_price))[:5]
+
+# Fetch 9 Nearest-To-Money Strikes for deeper analysis
+ntm_strikes = sorted(df_display['strike'].tolist(), key=lambda x: abs(x - spot_price))[:9]
 ntm_strikes.sort()
 
 spot_chg = 0
@@ -483,71 +530,43 @@ def get_action(coi, is_ce):
     elif spot_chg < 0: return ("Short Buildup", "#ef4444") if coi > 0 else ("Long Unwinding", "#f97316") if is_ce else ("Long Buildup", "#22c55e") if coi > 0 else ("Short Covering", "#facc15")
     else: return ("Buildup", "#38bdf8") if coi > 0 else ("Unwinding", "#c084fc")
 
-table_html = "<table class='action-table'><tr><th>Call Action</th><th>Strike</th><th>Put Action</th></tr>"
+table_html = """
+<table class='action-table' style='width:100%; text-align:center;'>
+    <tr style='background-color:#1e293b;'>
+        <th style='text-align:right;'>Call Total OI</th>
+        <th style='text-align:right;'>Call ΔOI</th>
+        <th style='text-align:right;'>Call Action</th>
+        <th style='text-align:center; font-size:14px; color:#f8fafc;'>Strike</th>
+        <th style='text-align:left;'>Put Action</th>
+        <th style='text-align:left;'>Put ΔOI</th>
+        <th style='text-align:left;'>Put Total OI</th>
+    </tr>
+"""
 for strk in ntm_strikes:
     row = df_display[df_display['strike'] == strk].iloc[0]
-    ce_a, ce_c = get_action(row['ce_coi'], True); pe_a, pe_c = get_action(row['pe_coi'], False)
-    bg = "background-color: #1e293b;" if strk == atm_strike else ""
-    table_html += f"<tr style='{bg}'><td style='color:{ce_c}'>{ce_a}</td><td style='color:#fff;'>{strk}</td><td style='color:{pe_c}'>{pe_a}</td></tr>"
+    c_oi = row['ce_oi']
+    p_oi = row['pe_oi']
+    c_coi = row['ce_coi']
+    p_coi = row['pe_coi']
+    
+    ce_a, ce_c = get_action(c_coi, True)
+    pe_a, pe_c = get_action(p_coi, False)
+    
+    bg = "background-color: #334155;" if strk == atm_strike else "border-bottom: 1px solid #1e293b;"
+    
+    table_html += f"<tr style='{bg}'>"
+    table_html += f"<td style='padding:4px; text-align:right; color:#ef4444;'>{format_oi(c_oi)}</td>"
+    table_html += f"<td style='padding:4px; text-align:right; color:{'#ef4444' if c_coi < 0 else '#22c55e'};'>{format_oi(c_coi)}</td>"
+    table_html += f"<td style='padding:4px; text-align:right; color:{ce_c}'>{ce_a}</td>"
+    table_html += f"<td style='padding:4px; text-align:center; color:#fff; font-size:14px;'>{strk}</td>"
+    table_html += f"<td style='padding:4px; text-align:left; color:{pe_c}'>{pe_a}</td>"
+    table_html += f"<td style='padding:4px; text-align:left; color:{'#ef4444' if p_coi < 0 else '#22c55e'};'>{format_oi(p_coi)}</td>"
+    table_html += f"<td style='padding:4px; text-align:left; color:#22c55e;'>{format_oi(p_oi)}</td>"
+    table_html += "</tr>"
+
 table_html += "</table>"
 
-# --- TIMEFRAME ALIGNMENT ALGORITHM (AI INSIGHT) ---
-all_bull = all(flow_states.values())
-all_bear = not any(flow_states.values())
-
-macro_bull = flow_states["1D"] and flow_states["60m"] and flow_states["30m"] and flow_states["15m"]
-macro_bear = not flow_states["1D"] and not flow_states["60m"] and not flow_states["30m"] and not flow_states["15m"]
-
-micro_bull = flow_states["1m"] and flow_states["3m"] and flow_states["5m"]
-micro_bear = not flow_states["1m"] and not flow_states["3m"] and not flow_states["5m"]
-
-expert_verdict, user_action, my_action = "", "", ""
-
-if all_bull:
-    expert_verdict = "🟢 ALL-CLEAR TREND DAY (BULLISH): Every timeframe from 1m to 1D is showing positive Put writing flow. Buyers are in total control."
-    user_action = "Aggressive sizing. Buy every dip. Hold winners longer. Do not attempt to short."
-    my_action = f"Riding directional longs. Scaling into Call options or Futures. Trailing stop-loss just below {sup_strike}."
-elif all_bear:
-    expert_verdict = "🔴 ALL-CLEAR TREND DAY (BEARISH): Every timeframe from 1m to 1D is showing negative Call writing flow. Sellers are in total control."
-    user_action = "Aggressive sizing. Sell every rip. Hold winners longer. Do not attempt to buy."
-    my_action = f"Riding directional shorts. Scaling into Put options or short Futures. Trailing stop-loss just above {res_strike}."
-elif macro_bull and micro_bear:
-    expert_verdict = "🟡 THE 'BUY THE DIP' TRAP: The macro trend (15m to 1D) is Bullish, but micro momentum (1m, 3m, 5m) is pulling back. This is a mechanical trap."
-    user_action = "Wait for the micro flow to turn Green again, then enter long. Do not short the pullback."
-    my_action = f"Placing limit buy orders near {sup_strike}. Waiting for micro flow alignment to pull the trigger."
-elif macro_bear and micro_bull:
-    expert_verdict = "🟠 THE 'SELL THE RIP' TRAP: The macro trend (15m to 1D) is Bearish, but micro momentum (1m, 3m, 5m) is spiking. This is a dead-cat bounce."
-    user_action = "Wait for the micro flow to turn Red again, then enter short. Do not buy the breakout."
-    my_action = f"Placing limit sell orders near {res_strike}. Waiting for micro flow alignment to execute shorts."
-elif flow_states["15m"] != flow_states["60m"] or flow_states["30m"] != flow_states["1D"]:
-    expert_verdict = f"⚪ CHOP ZONE (DIVERGENCE): The intraday trend is fighting the daily structural trend. Market is trapped between {sup_strike} and {res_strike}."
-    user_action = "Reduce position sizing. Scalp strictly from support to resistance. Do not hold for big targets."
-    my_action = f"Deploying Iron Condors or Strangles to farm theta decay. Taking quick 10-15 point scalps on extreme edges."
-else:
-    if flow_states["1D"] and flow_states["3m"]:
-        expert_verdict = f"Moderate Bullish Continuation. Macro is Bullish and current 3m momentum aligns."
-        user_action = f"Focus on 'Buy on Dips' near the {atm_strike} or {sup_strike} zones."
-        my_action = f"Deploying Short Put Spreads to collect premium. Holding directional longs."
-    elif not flow_states["1D"] and not flow_states["3m"]:
-        expert_verdict = f"Moderate Bearish Continuation. Macro is Bearish and current 3m momentum aligns."
-        user_action = f"Focus on 'Sell on Rise' opportunities near {res_strike}."
-        my_action = f"Holding Short Call Spreads and initiating short scalps on pullbacks."
-    else:
-        expert_verdict = f"Mixed Flow. Macro and Micro are out of sync. Waiting for timeframe alignment."
-        user_action = "Stay cautious. Wait for 15m and 3m to align before committing size."
-        my_action = "Sitting on hands. Preserving capital until a high-probability alignment occurs."
-
-insight_html = f"""
-<div style='background-color:#0f172a; padding:8px 12px; border-radius:6px; font-size:11px; color:#f8fafc; border-left:4px solid #c084fc; height:100%;'>
-    <div style='margin-bottom:4px;'><span style='color:#c084fc; font-weight:bold;'>🧑‍💼 TRADER'S VERDICT:</span> {expert_verdict}</div>
-    <div style='margin-bottom:4px;'><span style='color:#38bdf8; font-weight:bold;'>💡 YOUR PLAY:</span> {user_action}</div>
-    <div><span style='color:#facc15; font-weight:bold;'>🎯 MY PLAY:</span> {my_action}</div>
-</div>
-"""
-
-ac1, ac2 = st.columns([1.1, 1.9])
-with ac1: st.markdown(table_html, unsafe_allow_html=True)
-with ac2: st.markdown(insight_html, unsafe_allow_html=True)
+st.markdown(table_html, unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 if market_mode == "🟢 LIVE" and refresh_rate != "Manual":
